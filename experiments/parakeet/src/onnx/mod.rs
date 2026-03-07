@@ -61,66 +61,82 @@ pub fn transcribe(samples: &[i16], executor: Executor) -> TranscribeResult {
     let mut decoder = Decoder::new(&rt, onnx_executor);
     let tokenizer = Tokenizer::new();
 
-    let mut features: Vec<f32> = Vec::new();
-    let mut frames = 0usize;
-    let mut accumulator = String::new();
     let mut partials = Vec::new();
+    let mut accumulator = String::new();
     let mut first_utterance_time: Option<Duration> = None;
-    let start = Instant::now();
+    let mut total_time = Duration::ZERO;
 
-    let mut offset = 0;
-    while offset < samples.len() {
-        let end = (offset + CHUNK_SAMPLES).min(samples.len());
-        let chunk = &samples[offset..end];
-        let is_last = end == samples.len();
-        offset = end;
+    for iteration in 0..2 {
+        feature_extractor.reset();
+        encoder.reset();
+        decoder.reset();
 
-        // extract features
-        let new_features = feature_extractor.extract_features(chunk);
-        let new_frames = new_features.len() / MEL_SIZE;
-        if new_frames > 0 {
-            features.extend_from_slice(&new_features);
-            frames += new_frames;
-        }
+        let mut features: Vec<f32> = Vec::new();
+        let mut frames = 0usize;
+        accumulator.clear();
+        partials.clear();
+        first_utterance_time = None;
 
-        // on last chunk, pad to fill at least one encoder window
-        if is_last && frames > 0 && frames < ENCODER_WINDOW_SIZE {
-            let pad_frames = ENCODER_WINDOW_SIZE - frames;
-            features.resize(features.len() + pad_frames * MEL_SIZE, 0.0);
-            frames = ENCODER_WINDOW_SIZE;
-        }
+        let start = Instant::now();
 
-        // process full encoder windows
-        while frames >= ENCODER_WINDOW_SIZE {
-            let window = &features[..ENCODER_WINDOW_SIZE * MEL_SIZE];
-            let mut transposed = vec![0.0f32; ENCODER_WINDOW_SIZE * MEL_SIZE];
-            for frame in 0..ENCODER_WINDOW_SIZE {
-                for bin in 0..MEL_SIZE {
-                    transposed[bin * ENCODER_WINDOW_SIZE + frame] = window[frame * MEL_SIZE + bin];
-                }
+        let mut offset = 0;
+        while offset < samples.len() {
+            let end = (offset + CHUNK_SAMPLES).min(samples.len());
+            let chunk = &samples[offset..end];
+            let is_last = end == samples.len();
+            offset = end;
+
+            // extract features
+            let new_features = feature_extractor.extract_features(chunk);
+            let new_frames = new_features.len() / MEL_SIZE;
+            if new_frames > 0 {
+                features.extend_from_slice(&new_features);
+                frames += new_frames;
             }
 
-            let shift = ENCODER_CHUNK_SHIFT.min(frames);
-            features.drain(..shift * MEL_SIZE);
-            frames -= shift;
+            // on last chunk, pad to fill at least one encoder window
+            if is_last && frames > 0 && frames < ENCODER_WINDOW_SIZE {
+                let pad_frames = ENCODER_WINDOW_SIZE - frames;
+                features.resize(features.len() + pad_frames * MEL_SIZE, 0.0);
+                frames = ENCODER_WINDOW_SIZE;
+            }
 
-            let encoder_frames = encoder.encode_window(&transposed);
-            let tokens = decoder.decode(&encoder_frames);
-            let text = tokenizer.tokenize(&tokens);
-
-            if text.chars().any(|c| c.is_alphanumeric()) {
-                accumulator.push_str(&text);
-
-                if first_utterance_time.is_none() {
-                    first_utterance_time = Some(start.elapsed());
+            // process full encoder windows
+            while frames >= ENCODER_WINDOW_SIZE {
+                let window = &features[..ENCODER_WINDOW_SIZE * MEL_SIZE];
+                let mut transposed = vec![0.0f32; ENCODER_WINDOW_SIZE * MEL_SIZE];
+                for frame in 0..ENCODER_WINDOW_SIZE {
+                    for bin in 0..MEL_SIZE {
+                        transposed[bin * ENCODER_WINDOW_SIZE + frame] = window[frame * MEL_SIZE + bin];
+                    }
                 }
 
-                partials.push(accumulator.clone());
+                let shift = ENCODER_CHUNK_SHIFT.min(frames);
+                features.drain(..shift * MEL_SIZE);
+                frames -= shift;
+
+                let encoder_frames = encoder.encode_window(&transposed);
+                let tokens = decoder.decode(&encoder_frames);
+                let text = tokenizer.tokenize(&tokens);
+
+                if text.chars().any(|c| c.is_alphanumeric()) {
+                    accumulator.push_str(&text);
+
+                    if first_utterance_time.is_none() {
+                        first_utterance_time = Some(start.elapsed());
+                    }
+
+                    partials.push(accumulator.clone());
+                }
             }
+        }
+
+        total_time = start.elapsed();
+
+        if iteration == 0 {
+            println!("Warmup complete ({:.3}s), running measurement pass...", total_time.as_secs_f64());
         }
     }
-
-    let total_time = start.elapsed();
 
     TranscribeResult {
         partials,

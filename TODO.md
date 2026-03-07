@@ -1,0 +1,2 @@
+- optimize LLM with TensorRT-LLM
+- fuse TTS pipeline
