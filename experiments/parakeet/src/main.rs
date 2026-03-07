@@ -31,7 +31,6 @@ fn read_wav(path: &str) -> Vec<i16> {
     }
 
     assert_eq!(bits_per_sample, 16, "Only 16-bit WAV supported");
-    assert_eq!(sample_rate, 16000, "Only 16kHz WAV supported");
 
     let samples: Vec<i16> = audio_data
         .chunks_exact(2)
@@ -39,22 +38,47 @@ fn read_wav(path: &str) -> Vec<i16> {
         .collect();
 
     // mix to mono if stereo
-    if num_channels == 2 {
+    let mono = if num_channels == 2 {
         samples
             .chunks_exact(2)
             .map(|pair| ((pair[0] as i32 + pair[1] as i32) / 2) as i16)
             .collect()
     } else {
         samples
+    };
+
+    // resample to 16kHz if needed
+    if sample_rate == 16000 {
+        mono
+    } else {
+        let ratio = sample_rate as f64 / 16000.0;
+        let out_len = (mono.len() as f64 / ratio) as usize;
+        (0..out_len)
+            .map(|i| {
+                let src = i as f64 * ratio;
+                let idx = src as usize;
+                let frac = src - idx as f64;
+                let a = mono[idx] as f64;
+                let b = if idx + 1 < mono.len() { mono[idx + 1] as f64 } else { a };
+                (a + frac * (b - a)) as i16
+            })
+            .collect()
     }
 }
 
 fn main() {
+    let executor = match std::env::args().nth(1).as_deref() {
+        Some("cuda") => onnx::Executor::Cuda,
+        Some("tensorrt") => onnx::Executor::TensorRT,
+        Some("cpu") | None => onnx::Executor::Cpu,
+        Some(other) => panic!("Unknown executor: {other}. Use cpu, cuda, or tensorrt"),
+    };
+
     let samples = read_wav("test.wav");
     let duration_secs = samples.len() as f64 / 16000.0;
     println!("Audio: {:.2}s ({} samples)", duration_secs, samples.len());
 
-    let result = onnx::transcribe(&samples);
+    let result = onnx::transcribe(&samples, executor);
 
     for partial in &result.partials {
         println!("[partial] {}", partial);

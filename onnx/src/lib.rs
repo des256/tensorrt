@@ -197,6 +197,7 @@ unsafe extern "C" {
     pub fn OrtSessionOptionsAppendExecutionProvider_CUDA(options: *mut OrtSessionOptions, device_id: i32) -> *mut OrtStatus;
 }
 
+
 pub type CreateStatusFn = unsafe extern "C" fn(code: OrtErrorCode, msg: *const c_char) -> *mut OrtStatus;
 pub type GetErrorCodeFn = unsafe extern "C" fn(status: *const OrtStatus) -> OrtErrorCode;
 pub type GetErrorMessageFn = unsafe extern "C" fn(status: *const OrtStatus) -> *const c_char;
@@ -384,6 +385,7 @@ mod tests {
 pub enum Executor {
     Cpu,
     Cuda(usize),
+    TensorRT(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -567,11 +569,35 @@ impl Onnx {
         if !status.is_null() {
             panic!("Failed to create session options: {}", self.status_to_string(status));
         }
-        if let Executor::Cuda(id) = executor {
-            let status = unsafe { OrtSessionOptionsAppendExecutionProvider_CUDA(options, id as i32) };
-            if !status.is_null() {
-                unsafe { (self.release_session_options)(options) };
-                panic!("Failed to append execution provider CUDA: {}", self.status_to_string(status));
+        match executor {
+            Executor::Cpu => {}
+            Executor::Cuda(id) => {
+                let status = unsafe { OrtSessionOptionsAppendExecutionProvider_CUDA(options, id as i32) };
+                if !status.is_null() {
+                    unsafe { (self.release_session_options)(options) };
+                    panic!("Failed to append execution provider CUDA: {}", self.status_to_string(status));
+                }
+            }
+            Executor::TensorRT(id) => {
+                unsafe extern "C" {
+                    fn dlopen(filename: *const c_char, flags: i32) -> *mut c_void;
+                    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+                }
+                const RTLD_LAZY: i32 = 1;
+                type AppendTensorrtFn = unsafe extern "C" fn(*mut OrtSessionOptions, i32) -> *mut OrtStatus;
+                let sym = CString::new("OrtSessionOptionsAppendExecutionProvider_Tensorrt").unwrap();
+                let handle = unsafe { dlopen(std::ptr::null(), RTLD_LAZY) };
+                let ptr = unsafe { dlsym(handle, sym.as_ptr()) };
+                if ptr.is_null() {
+                    unsafe { (self.release_session_options)(options) };
+                    panic!("TensorRT execution provider not available (symbol not found)");
+                }
+                let func: AppendTensorrtFn = unsafe { std::mem::transmute(ptr) };
+                let status = unsafe { func(options, id as i32) };
+                if !status.is_null() {
+                    unsafe { (self.release_session_options)(options) };
+                    panic!("Failed to append execution provider TensorRT: {}", self.status_to_string(status));
+                }
             }
         }
         let status = unsafe {

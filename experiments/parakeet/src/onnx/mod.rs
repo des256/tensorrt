@@ -33,6 +33,13 @@ use decoder::*;
 mod tokenizer;
 use tokenizer::*;
 
+#[derive(Clone, Copy)]
+pub enum Executor {
+    Cpu,
+    Cuda,
+    TensorRT,
+}
+
 pub struct TranscribeResult {
     pub partials: Vec<String>,
     pub final_text: String,
@@ -40,12 +47,18 @@ pub struct TranscribeResult {
     pub total_time: Duration,
 }
 
-pub fn transcribe(samples: &[i16]) -> TranscribeResult {
+pub fn transcribe(samples: &[i16], executor: Executor) -> TranscribeResult {
     let rt = onnx::Onnx::new(18);
 
+    let onnx_executor = match executor {
+        Executor::Cpu => onnx::Executor::Cpu,
+        Executor::Cuda => onnx::Executor::Cuda(0),
+        Executor::TensorRT => onnx::Executor::TensorRT(0),
+    };
+
     let mut feature_extractor = FeatureExtractor::new();
-    let mut encoder = Encoder::new(&rt, onnx::Executor::Cpu);
-    let mut decoder = Decoder::new(&rt, onnx::Executor::Cpu);
+    let mut encoder = Encoder::new(&rt, onnx_executor);
+    let mut decoder = Decoder::new(&rt, onnx_executor);
     let tokenizer = Tokenizer::new();
 
     let mut features: Vec<f32> = Vec::new();
