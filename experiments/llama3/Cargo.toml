@@ -8,4 +8,5 @@ trtllm = ["tensorrt/trtllm"]
 
 [dependencies]
 tensorrt = { path = "../../tensorrt" }
+onnx = { path = "../../onnx" }
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
