@@ -3,4 +3,9 @@ name = "llama3"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+trtllm = ["tensorrt/trtllm"]
+
 [dependencies]
+tensorrt = { path = "../../tensorrt" }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }

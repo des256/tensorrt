@@ -5,6 +5,7 @@
 
 #include "tensorrt_llm/executor/executor.h"
 #include "tensorrt_llm/executor/types.h"
+#include "tensorrt_llm/plugins/api/tllmPlugin.h"
 
 #include <chrono>
 #include <cstring>
@@ -53,6 +54,9 @@ TrtLlmStatus trtllm_executor_create(
     TrtLlmExecutor** out_handle)
 {
     try {
+        // Register TRT-LLM plugins (safe to call multiple times).
+        initTrtLlmPlugins();
+
         tle::ModelType mt;
         switch (model_type) {
             case TRTLLM_DECODER_ONLY:   mt = tle::ModelType::kDECODER_ONLY; break;

@@ -20,8 +20,10 @@ fn main() {
         // Link against TRT-LLM and its dependencies.
         println!("cargo:rustc-link-search=native={build_lib_dir}");
         println!("cargo:rustc-link-lib=dylib=tensorrt_llm");
+        println!("cargo:rustc-link-lib=dylib=nvinfer_plugin_tensorrt_llm");
 
         // TensorRT
+        println!("cargo:rustc-link-search=native=/usr/local/tensorrt/lib");
         println!("cargo:rustc-link-search=native=/usr/lib/aarch64-linux-gnu");
         println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
         println!("cargo:rustc-link-lib=dylib=nvinfer");
