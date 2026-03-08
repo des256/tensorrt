@@ -15,10 +15,12 @@ fn main() {
             .include(&include_dir)
             .include("/usr/local/cuda/include")
             .flag("-Wno-deprecated-declarations")
+            .flag("-D_GLIBCXX_USE_CXX11_ABI=0")
             .compile("trtllm_executor_stub");
 
         // Link against TRT-LLM and its dependencies.
         println!("cargo:rustc-link-search=native={build_lib_dir}");
+        println!("cargo:rustc-link-search=native={build_lib_dir}/plugins");
         println!("cargo:rustc-link-lib=dylib=tensorrt_llm");
         println!("cargo:rustc-link-lib=dylib=nvinfer_plugin_tensorrt_llm");
 

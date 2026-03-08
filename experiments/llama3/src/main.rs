@@ -11,7 +11,8 @@ fn main() {
         use ::tensorrt::{Executor, ExecutorConfig, ModelType};
         use tokenizers::Tokenizer;
 
-        let engine_dir = "data/llama3/engine";
+        let engine_dir = std::env::var("TRTLLM_ENGINE_DIR")
+            .unwrap_or_else(|_| "data/llama3/engine".to_string());
         let tokenizer_path = "data/raw/llama3/tokenizer.json";
 
         let tokenizer = Tokenizer::from_file(tokenizer_path)
@@ -22,7 +23,7 @@ fn main() {
             kv_cache_free_gpu_mem_fraction: 0.5,
             max_beam_width: 1,
         };
-        let executor = Executor::new(engine_dir, &config);
+        let executor = Executor::new(&engine_dir, &config);
 
         // Warmup request (discard result)
         let _ = tensorrt::generate(&executor, &tokenizer, "hi");
