@@ -1,0 +1,20 @@
+# Jetson (aarch64) image for model conversion and engine building.
+#
+# TODO: Pin the exact L4T version to match the desktop TRT-LLM version.
+# The TRT-LLM version available for Jetson may need to be built from source
+# or installed via pip depending on the JetPack release. Check:
+#   https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/installation/build-from-source-linux.md
+FROM nvcr.io/nvidia/l4t-tensorrt:r36.4.0-runtime
+
+# TODO: Install matching TRT-LLM version. Options:
+#   1. pip install tensorrt_llm (if a compatible wheel exists for aarch64)
+#   2. Build from source using the TRT-LLM repo
+# For now, this image only supports plain TensorRT (trtexec) workflows.
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir optimum transformers huggingface_hub
+
+WORKDIR /workspace
