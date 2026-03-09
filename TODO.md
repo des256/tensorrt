@@ -1,3 +1,6 @@
+-> trtllm-build works on jetson
+-> compiling the TensorRT-LLM wheel on the host didn't work yet
+
 - optimize LLM with TensorRT-LLM
 - fuse TTS pipeline
 
