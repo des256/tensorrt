@@ -348,13 +348,6 @@ name = "onnx"
 version = "0.1.0"
 
 [[package]]
-name = "parakeet"
-version = "0.1.0"
-dependencies = [
- "onnx",
-]
-
-[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"

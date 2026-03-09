@@ -1,7 +1,0 @@
-# Desktop (x86_64) image for model conversion and engine building.
-# Base image includes: TRT-LLM, TensorRT (trtexec), Python, PyTorch, CUDA.
-FROM tensorrt_llm/release:latest
-
-RUN pip install --no-cache-dir optimum transformers huggingface_hub
-
-WORKDIR /workspace
