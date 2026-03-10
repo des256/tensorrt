@@ -1,5 +1,5 @@
 use std::time::Instant;
-use tensorrt::{Executor, SamplingParams};
+pub use tensorrt::{Executor, ExecutorConfig, ModelType, SamplingParams};
 use tokenizers::Tokenizer;
 
 const BOS_TOKEN_ID: i32 = 128000; // <|begin_of_text|>
@@ -19,11 +19,7 @@ fn apply_chat_template(prompt: &str) -> String {
     )
 }
 
-pub fn generate(
-    executor: &Executor,
-    tokenizer: &Tokenizer,
-    prompt: &str,
-) -> (String, u128) {
+pub fn generate(executor: &Executor, tokenizer: &Tokenizer, prompt: &str) -> (String, u128) {
     let templated = apply_chat_template(prompt);
 
     let encoding = tokenizer

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use onnx::{ONNXTensorElementDataType, Session, Value};
+pub use onnx::*;
 use tokenizers::Tokenizer;
 
 const NUM_LAYERS: usize = 28;
@@ -25,7 +25,7 @@ fn apply_chat_template(prompt: &str) -> String {
     )
 }
 
-fn argmax_f16_logits(logits_value: &Value, seq_len: usize) -> i64 {
+fn argmax_logits(logits_value: &Value, seq_len: usize) -> i64 {
     let logits_f32 = logits_value.extract_as_f32();
     let offset = (seq_len - 1) * VOCAB_SIZE;
     let last_logits = &logits_f32[offset..offset + VOCAB_SIZE];
@@ -73,15 +73,22 @@ pub fn generate(session: &Session, tokenizer: &Tokenizer, prompt: &str) -> (Stri
     }
     let output_name_refs: Vec<&str> = all_output_names.iter().map(|s| s.as_str()).collect();
 
-    // Initial empty KV cache: [1, 8, 0, 128] Float16
+    // Detect the KV cache element type from the model's first past_key_values input
+    let kv_dtype = {
+        let input_count = session.input_count();
+        let mut dtype = ONNXTensorElementDataType::Float;
+        for idx in 0..input_count {
+            if session.input_name(idx).starts_with("past_key_values") {
+                dtype = session.input_element_type(idx);
+                break;
+            }
+        }
+        dtype
+    };
+
+    // Initial empty KV cache: [1, 8, 0, 128]
     let mut kv_cache: Vec<Value> = (0..NUM_LAYERS * 2)
-        .map(|_| {
-            Value::empty_typed(
-                onnx,
-                &[1, NUM_KV_HEADS, 0, HEAD_DIM],
-                ONNXTensorElementDataType::Float16,
-            )
-        })
+        .map(|_| Value::empty_typed(onnx, &[1, NUM_KV_HEADS, 0, HEAD_DIM], kv_dtype))
         .collect();
 
     let start = Instant::now();
@@ -104,7 +111,7 @@ pub fn generate(session: &Session, tokenizer: &Tokenizer, prompt: &str) -> (Stri
 
     let outputs = session.run(&inputs, &output_name_refs);
 
-    let next_token = argmax_f16_logits(&outputs[0], prompt_len);
+    let next_token = argmax_logits(&outputs[0], prompt_len);
     let time_to_first_token_ms = start.elapsed().as_millis();
 
     let mut past_seq_len = prompt_len;
@@ -123,8 +130,7 @@ pub fn generate(session: &Session, tokenizer: &Tokenizer, prompt: &str) -> (Stri
 
         let input_ids_val = Value::from_slice(onnx, &[1, 1], &[last_token]);
         let attention_mask: Vec<i64> = vec![1i64; past_seq_len + 1];
-        let attention_mask_val =
-            Value::from_slice(onnx, &[1, past_seq_len + 1], &attention_mask);
+        let attention_mask_val = Value::from_slice(onnx, &[1, past_seq_len + 1], &attention_mask);
         let position_ids_val = Value::from_slice(onnx, &[1, 1], &[past_seq_len as i64]);
 
         let mut inputs: Vec<(&str, &Value)> = Vec::with_capacity(3 + NUM_LAYERS * 2);
@@ -137,7 +143,7 @@ pub fn generate(session: &Session, tokenizer: &Tokenizer, prompt: &str) -> (Stri
 
         let outputs = session.run(&inputs, &output_name_refs);
 
-        let next_token = argmax_f16_logits(&outputs[0], 1);
+        let next_token = argmax_logits(&outputs[0], 1);
 
         past_seq_len += 1;
         kv_cache = outputs.into_iter().skip(1).collect();

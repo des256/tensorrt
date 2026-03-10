@@ -41,7 +41,7 @@ fn main() {
             .include(&include_dir)
             .include("/usr/local/cuda/include")
             .flag("-Wno-deprecated-declarations")
-            .flag("-D_GLIBCXX_USE_CXX11_ABI=0")
+            .flag("-D_GLIBCXX_USE_CXX11_ABI=1")
             .compile("trtllm_executor_stub");
 
         // TRT-LLM specific libraries (nvinfer/cudart/stdc++ already linked above).

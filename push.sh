@@ -5,11 +5,9 @@ EXCLUDES=(
     --exclude=.git/
     --exclude=.claude/
     --exclude=.worktrees/
-    --exclude='mutants.out*'
-    --exclude=data/*/source/
-    --exclude=data/*/onnx/
-    --exclude=data/*/.venv/
-    --exclude=data/*/venv/
+    --exclude=data/llama3-3b/source/
+    --exclude=data/llama3-3b/ckpt/
+    --exclude=data/llama3-3b/engine/
 )
-echo "pushing to murdock (dry-run)"
-rsync -azn --delete "${EXCLUDES[@]}" ./ "murdock:/home/desmond/tensorrt/"
+echo "pushing to murdock"
+rsync -az --delete "${EXCLUDES[@]}" ./ "murdock:/home/desmond/tensorrt/"
