@@ -9,12 +9,11 @@ Here are the measurements of all experiments.
         ONNX        TRT  ONNX         TRT
         CPU   CUDA       CPU    CUDA
 
-f32     456   31    X    1817   X     X
-f16     449   29    10   1826   ?
-q8f16   140   155   7    525    525
-q8i8    149*  58*   6    572*   572
-q4f16   391^  72^   4    692?
-q4i8    202^  73^   4    691?
+f16     449   29    10   1830
+q8f16   140   155   7    493
+q8i8    149*  58*   6    507*
+q4f16   391^  72^   4    2075^
+q4i8    202^  73^   4    577^
 
 * = output quality degrades into repetition
 ^ = output ok, but shorter
