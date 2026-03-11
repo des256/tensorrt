@@ -25,8 +25,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ffi/trt_runtime.cpp");
     println!("cargo:rerun-if-changed=src/ffi/trt_runtime.h");
 
-    let trtllm_root = std::env::var("TRTLLM_ROOT")
-        .expect("TRTLLM_ROOT env var must be set when building with --features trtllm");
+    let trtllm_root =
+        std::env::var("TRTLLM_ROOT").expect("TRTLLM_ROOT env var must be set when building");
 
     let include_dir = format!("{trtllm_root}/cpp/include");
     let build_lib_dir = format!("{trtllm_root}/cpp/build/tensorrt_llm");

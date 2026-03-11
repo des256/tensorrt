@@ -114,7 +114,7 @@ fn main() {
         #[cfg(not(feature = "jetson"))]
         let platform = "desktop";
 
-        let engine_variants = ["f16", "q8f16", "q8i8", "q4f16", "q4i8"];
+        let engine_variants = ["q8f16", "q8i8", "q4f16", "q4i8"];
         for engine_variant in &engine_variants {
             let engine_path = format!(
                 "data/llama3-3b/engine/{}/{}/rank0.engine",
