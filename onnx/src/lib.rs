@@ -303,6 +303,8 @@ pub type ModelMetadataGetCustomMetadataMapKeysFn = unsafe extern "C" fn(
     num_keys: *mut i64,
 ) -> *mut OrtStatus;
 pub type ReleaseModelMetadataFn = unsafe extern "C" fn(metadata: *mut OrtModelMetadata);
+pub type GetAvailableProvidersFn = unsafe extern "C" fn(out_ptr: *mut *mut *mut c_char, provider_length: *mut i32) -> *mut OrtStatus;
+pub type ReleaseAvailableProvidersFn = unsafe extern "C" fn(ptr: *mut *mut c_char, providers_length: i32) -> *mut OrtStatus;
 
 pub const IDX_CREATE_STATUS: usize = 0;
 pub const IDX_GET_ERROR_CODE: usize = 1;
@@ -343,6 +345,8 @@ pub const IDX_SESSION_GET_MODEL_METADATA: usize = 111;
 pub const IDX_MODEL_METADATA_LOOKUP_CUSTOM_METADATA_MAP: usize = 116;
 pub const IDX_RELEASE_MODEL_METADATA: usize = 118;
 pub const IDX_MODEL_METADATA_GET_CUSTOM_METADATA_MAP_KEYS: usize = 123;
+pub const IDX_GET_AVAILABLE_PROVIDERS: usize = 125;
+pub const IDX_RELEASE_AVAILABLE_PROVIDERS: usize = 126;
 
 impl OrtApi {
     pub unsafe fn get_fn<F>(&self, index: usize) -> F {
@@ -433,6 +437,8 @@ pub struct Onnx {
     pub model_metadata_lookup_custom_metadata_map: ModelMetadataLookupCustomMetadataMapFn,
     pub model_metadata_get_custom_metadata_map_keys: ModelMetadataGetCustomMetadataMapKeysFn,
     pub release_model_metadata: ReleaseModelMetadataFn,
+    pub get_available_providers: GetAvailableProvidersFn,
+    pub release_available_providers: ReleaseAvailableProvidersFn,
 }
 
 unsafe impl Send for Onnx {}
@@ -504,6 +510,9 @@ impl Onnx {
         let model_metadata_get_custom_metadata_map_keys: ModelMetadataGetCustomMetadataMapKeysFn =
             unsafe { (*api).get_fn(IDX_MODEL_METADATA_GET_CUSTOM_METADATA_MAP_KEYS) };
         let release_model_metadata: ReleaseModelMetadataFn = unsafe { (*api).get_fn(IDX_RELEASE_MODEL_METADATA) };
+        let get_available_providers: GetAvailableProvidersFn = unsafe { (*api).get_fn(IDX_GET_AVAILABLE_PROVIDERS) };
+        let release_available_providers: ReleaseAvailableProvidersFn =
+            unsafe { (*api).get_fn(IDX_RELEASE_AVAILABLE_PROVIDERS) };
         let log_id = CString::new("onnx").unwrap();
         let mut environment: *mut OrtEnv = null_mut();
         let status = unsafe { create_env(OrtLoggingLevel::Fatal, log_id.as_ptr(), &mut environment as *mut _) };
@@ -554,6 +563,8 @@ impl Onnx {
             model_metadata_lookup_custom_metadata_map,
             model_metadata_get_custom_metadata_map_keys,
             release_model_metadata,
+            get_available_providers,
+            release_available_providers,
         })
     }
 
@@ -824,6 +835,34 @@ impl Session {
         }
         unsafe { (self.onnx.release_model_metadata)(metadata) };
         map
+    }
+
+    pub fn execution_provider_names(&self) -> Vec<String> {
+        let mut providers_ptr: *mut *mut c_char = null_mut();
+        let mut num_providers: i32 = 0;
+        let status = unsafe {
+            (self.onnx.get_available_providers)(&mut providers_ptr as *mut _, &mut num_providers as *mut _)
+        };
+        if !status.is_null() {
+            panic!(
+                "Failed to get available providers: {}",
+                self.onnx.status_to_string(status)
+            );
+        }
+        let mut names = Vec::with_capacity(num_providers as usize);
+        for i in 0..num_providers as usize {
+            let name_ptr = unsafe { *providers_ptr.add(i) };
+            let name = unsafe { CStr::from_ptr(name_ptr).to_string_lossy().into_owned() };
+            names.push(name);
+        }
+        let status = unsafe { (self.onnx.release_available_providers)(providers_ptr, num_providers) };
+        if !status.is_null() {
+            panic!(
+                "Failed to release available providers: {}",
+                self.onnx.status_to_string(status)
+            );
+        }
+        names
     }
 
     pub fn run(&self, inputs: &[(&str, &Value)], output_names: &[&str]) -> Vec<Value> {
