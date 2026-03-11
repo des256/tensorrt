@@ -94,8 +94,8 @@ fn main() {
     #[cfg(not(feature = "trt"))]
     let model_paths = [
         "data/llama3-3b/onnx/f16/model.onnx",
-        "data/llama3-3b/onnx/q8f16/model.onnx",
-        "data/llama3-3b/onnx/q8i8/model.onnx",
+        "data/llama3-3b/onnx/q8f16/model_quantized.onnx",
+        "data/llama3-3b/onnx/q8i8/model_quantized.onnx",
         "data/llama3-3b/onnx/q4f16/model.onnx",
         "data/llama3-3b/onnx/q4i8/model.onnx",
     ];
