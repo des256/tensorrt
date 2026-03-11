@@ -1,4 +1,4 @@
 pub mod trt_runtime_ffi;
 
-#[cfg(feature = "trtllm")]
+#[cfg(feature = "trt")]
 pub mod trtllm_ffi;

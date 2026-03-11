@@ -20,14 +20,6 @@ NUM_KV_HEADS = 8
 HEAD_DIM = 128
 
 # --- Base ONNX exports ---
-print("Exporting ONNX f32 model...")
-main_export(
-    model_name_or_path=MODEL_DIR + "/source",
-    output=MODEL_DIR + "/onnx/f32",
-    task=TASK,
-    optimize="O3",
-)
-
 print("Exporting ONNX f16 model...")
 main_export(
     model_name_or_path=MODEL_DIR + "/source",
@@ -77,9 +69,7 @@ def preprocess(examples):
     # Provide dummy KV cache inputs (past_seq_len=1 with zeros) for calibration.
     # HF datasets can't store zero-length arrays, so we use 1 dummy past token
     # and extend the attention mask to cover it.
-    tokens["attention_mask"] = [
-        [1] + row for row in tokens["attention_mask"]
-    ]
+    tokens["attention_mask"] = [[1] + row for row in tokens["attention_mask"]]
     # Shape without batch dim — the data reader adds it via [value] wrapping
     kv_zeros = np.zeros((NUM_KV_HEADS, 1, HEAD_DIM), dtype=np.float32)
     for i in range(NUM_LAYERS):
@@ -123,7 +113,9 @@ q4_model = MatMulNBitsQuantizer(RAW_MODEL, bits=4, block_size=128, is_symmetric=
 q4_model.process()
 q4f16_dir = ONNX_DIR / "q4f16"
 q4f16_dir.mkdir(parents=True, exist_ok=True)
-q4_model.model.save_model_to_file(str(q4f16_dir / "model.onnx"), use_external_data_format=True)
+q4_model.model.save_model_to_file(
+    str(q4f16_dir / "model.onnx"), use_external_data_format=True
+)
 # Copy tokenizer/config from raw export
 for f in (ONNX_DIR / "_raw").iterdir():
     if not f.name.startswith("model.onnx") and not f.is_dir():
@@ -136,7 +128,9 @@ q4i8_model = MatMulNBitsQuantizer(
 q4i8_model.process()
 q4i8_dir = ONNX_DIR / "q4i8"
 q4i8_dir.mkdir(parents=True, exist_ok=True)
-q4i8_model.model.save_model_to_file(str(q4i8_dir / "model.onnx"), use_external_data_format=True)
+q4i8_model.model.save_model_to_file(
+    str(q4i8_dir / "model.onnx"), use_external_data_format=True
+)
 for f in (ONNX_DIR / "_raw").iterdir():
     if not f.name.startswith("model.onnx") and not f.is_dir():
         (q4i8_dir / f.name).write_bytes(f.read_bytes())

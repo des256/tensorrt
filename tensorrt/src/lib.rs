@@ -8,7 +8,7 @@ mod ffi;
 mod runtime;
 pub use runtime::*;
 
-#[cfg(feature = "trtllm")]
+#[cfg(feature = "trt")]
 mod executor;
-#[cfg(feature = "trtllm")]
+#[cfg(feature = "trt")]
 pub use executor::*;

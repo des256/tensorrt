@@ -1,9 +1,11 @@
 use tokenizers::Tokenizer;
 
 mod onnx;
-#[cfg(feature = "trtllm")]
+#[cfg(feature = "trt")]
 mod tensorrt;
 
+// Test ONNX runtime on CPU
+#[cfg(all(not(feature = "cuda"), not(feature = "trt")))]
 fn run_onnx_cpu(model_path: &str, tokenizer_path: &str, prompt: &str) {
     let tokenizer = Tokenizer::from_file(tokenizer_path)
         .unwrap_or_else(|e| panic!("Failed to load tokenizer: {e}"));
@@ -28,7 +30,8 @@ fn run_onnx_cpu(model_path: &str, tokenizer_path: &str, prompt: &str) {
     println!("Output: {output}");
 }
 
-#[allow(dead_code)]
+// Test ONNX runtime on CUDA
+#[cfg(all(feature = "cuda", not(feature = "trt")))]
 fn run_onnx_cuda(model_path: &str, tokenizer_path: &str, prompt: &str) {
     let tokenizer = Tokenizer::from_file(tokenizer_path)
         .unwrap_or_else(|e| panic!("Failed to load tokenizer: {e}"));
@@ -53,7 +56,8 @@ fn run_onnx_cuda(model_path: &str, tokenizer_path: &str, prompt: &str) {
     println!("Output: {output}");
 }
 
-#[cfg(feature = "trtllm")]
+// Test TensorRT
+#[cfg(all(not(feature = "cuda"), feature = "trt"))]
 fn run_tensorrt(engine_path: &str, prompt: &str) {
     let engine_dir = std::path::Path::new(engine_path)
         .parent()
@@ -90,44 +94,36 @@ fn main() {
     let prompt = "Please tell me something about cars";
     let tokenizer_path = "data/llama3-3b/source/tokenizer.json";
 
-    /*
-    let onnx_models = [
-        "data/llama3-3b/onnx/f32/model.onnx",
+    #[cfg(not(feature = "trt"))]
+    let model_paths = [
         "data/llama3-3b/onnx/f16/model.onnx",
-        "data/llama3-3b/onnx/q8f16/model_quantized.onnx",
-        "data/llama3-3b/onnx/q8i8/model_quantized.onnx",
+        "data/llama3-3b/onnx/q8f16/model.onnx",
+        "data/llama3-3b/onnx/q8i8/model.onnx",
         "data/llama3-3b/onnx/q4f16/model.onnx",
         "data/llama3-3b/onnx/q4i8/model.onnx",
     ];
-
-    for model in &onnx_models {
-        if std::path::Path::new(model).exists() {
-            run_onnx_cpu(model, tokenizer_path, prompt);
-        } else {
-            println!("Skipping (not found): {model}");
-        }
+    #[cfg(all(not(feature = "cuda"), not(feature = "trt")))]
+    for model_path in &model_paths {
+        run_onnx_cpu(model_path, tokenizer_path, prompt);
     }
-
-    for model in &onnx_models {
-        if std::path::Path::new(model).exists() {
-            run_onnx_cuda(model, tokenizer_path, prompt);
-        } else {
-            println!("Skipping (not found): {model}");
-        }
+    #[cfg(all(feature = "cuda", not(feature = "trt")))]
+    for model_path in &model_paths {
+        run_onnx_cuda(model_path, tokenizer_path, prompt);
     }
-    */
-
-    #[cfg(feature = "trtllm")]
+    #[cfg(all(not(feature = "cuda"), feature = "trt"))]
     {
-        let platform = std::env::var("PLATFORM").unwrap_or_else(|_| "desktop".to_string());
+        #[cfg(feature = "jetson")]
+        let platform = "jetson";
+        #[cfg(not(feature = "jetson"))]
+        let platform = "desktop";
+
         let engine_variants = ["f16", "q8f16", "q8i8", "q4f16", "q4i8"];
-        for variant in &engine_variants {
-            let path = format!("data/llama3-3b/engine/{platform}/{variant}/rank0.engine");
-            if std::path::Path::new(&path).exists() {
-                run_tensorrt(&path, prompt);
-            } else {
-                println!("Skipping (not found): {path}");
-            }
+        for engine_variant in &engine_variants {
+            let engine_path = format!(
+                "data/llama3-3b/engine/{}/{}/rank0.engine",
+                platform, engine_variant
+            );
+            run_tensorrt(&path, prompt);
         }
     }
 }

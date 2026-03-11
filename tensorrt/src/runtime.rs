@@ -188,11 +188,7 @@ impl Context {
             )
         };
         if status != ffi::TrtStatus::Ok {
-            panic!(
-                "Failed to set input shape for '{}': {}",
-                name,
-                last_error()
-            );
+            panic!("Failed to set input shape for '{}': {}", name, last_error());
         }
     }
 

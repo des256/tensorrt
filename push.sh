@@ -11,3 +11,4 @@ EXCLUDES=(
 )
 echo "pushing to murdock"
 rsync -az --delete "${EXCLUDES[@]}" ./ "murdock:/home/desmond/tensorrt/"
+echo "done."
