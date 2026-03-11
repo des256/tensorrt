@@ -120,7 +120,7 @@ fn main() {
                 "data/llama3-3b/engine/{}/{}/rank0.engine",
                 platform, engine_variant
             );
-            run_tensorrt(&path, prompt);
+            run_tensorrt(&engine_path, prompt);
         }
     }
 }
