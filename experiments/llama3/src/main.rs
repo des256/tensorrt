@@ -7,6 +7,7 @@ mod tensorrt;
 // Test ONNX runtime on CPU
 #[cfg(all(not(feature = "cuda"), not(feature = "trt")))]
 fn run_onnx_cpu(model_path: &str, tokenizer_path: &str, prompt: &str) {
+    println!("Running ONNX model on CPU: {}", model_path);
     let tokenizer = Tokenizer::from_file(tokenizer_path)
         .unwrap_or_else(|e| panic!("Failed to load tokenizer: {e}"));
 
@@ -24,8 +25,6 @@ fn run_onnx_cpu(model_path: &str, tokenizer_path: &str, prompt: &str) {
     // perform test
     let (output, ttft_ms) = onnx::generate(&session, &tokenizer, prompt);
 
-    println!("[ONNX Runtime CPU]");
-    println!("model: {}", model_path);
     println!("TTFT: {ttft_ms} ms");
     println!("Output: {output}");
 }
@@ -33,6 +32,7 @@ fn run_onnx_cpu(model_path: &str, tokenizer_path: &str, prompt: &str) {
 // Test ONNX runtime on CUDA
 #[cfg(all(feature = "cuda", not(feature = "trt")))]
 fn run_onnx_cuda(model_path: &str, tokenizer_path: &str, prompt: &str) {
+    println!("Running ONNX model on CUDA: {}", model_path);
     let tokenizer = Tokenizer::from_file(tokenizer_path)
         .unwrap_or_else(|e| panic!("Failed to load tokenizer: {e}"));
 
@@ -50,8 +50,6 @@ fn run_onnx_cuda(model_path: &str, tokenizer_path: &str, prompt: &str) {
     // perform test
     let (output, ttft_ms) = onnx::generate(&session, &tokenizer, prompt);
 
-    println!("[ONNX Runtime CPU]");
-    println!("model: {}", model_path);
     println!("TTFT: {ttft_ms} ms");
     println!("Output: {output}");
 }
@@ -59,6 +57,7 @@ fn run_onnx_cuda(model_path: &str, tokenizer_path: &str, prompt: &str) {
 // Test TensorRT
 #[cfg(all(not(feature = "cuda"), feature = "trt"))]
 fn run_tensorrt(engine_path: &str, prompt: &str) {
+    println!("Running TensorRT engine: {}", model_path);
     let engine_dir = std::path::Path::new(engine_path)
         .parent()
         .unwrap()
@@ -82,8 +81,6 @@ fn run_tensorrt(engine_path: &str, prompt: &str) {
 
     let (output, ttft_ms) = tensorrt::generate(&executor, &tokenizer, prompt);
 
-    println!("[TensorRT-LLM]");
-    println!("model: {}", engine_path);
     println!("TTFT: {ttft_ms} ms");
     println!("Output: {output}");
 
