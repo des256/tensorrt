@@ -57,7 +57,7 @@ fn run_onnx_cuda(model_path: &str, tokenizer_path: &str, prompt: &str) {
 // Test TensorRT
 #[cfg(all(not(feature = "cuda"), feature = "trt"))]
 fn run_tensorrt(engine_path: &str, prompt: &str) {
-    println!("Running TensorRT engine: {}", model_path);
+    println!("Running TensorRT engine: {}", engine_path);
     let engine_dir = std::path::Path::new(engine_path)
         .parent()
         .unwrap()
