@@ -1,87 +1,120 @@
-use tokenizers::Tokenizer;
+mod onnx_impl;
 
-mod onnx;
 #[cfg(feature = "trt")]
-mod tensorrt;
+mod tensorrt_impl;
 
 // test ONNX with CPU provider
 #[cfg(all(not(feature = "cuda"), not(feature = "trt")))]
-fn run_onnx_cpu(model_folder_path: &str, audio: &[i16]) {
+fn run_onnx_cpu<T: onnx::TensorElement + Default + onnx_impl::ToFromF32>(
+    model_folder_path: &str,
+    audio: &[i16],
+) {
     println!("Running ONNX model on CPU: {}", model_folder_path);
 
+    let mut moonshine = onnx_impl::Moonshine::<T>::new(model_folder_path, onnx::Executor::Cpu);
     // TODO: warmup request (discard result)
 
-    // TODO: perform test
-    let latency = 0u64;
-    let output = "TODO".to_string();
-
+    // perform test
+    let mut latency: Option<u64> = None;
+    let mut last_partial = String::new();
+    for chunk in audio.chunks(8000) {
+        let (partial, new_latency) = moonshine.run_chunk(chunk);
+        if latency.is_none() {
+            latency = Some(new_latency);
+        }
+        last_partial = partial;
+    }
+    let latency = latency.unwrap();
     println!("latency: {} ms", latency);
-    println!("Output: {}", output);
+    println!("Output: {}", last_partial);
 }
 
 // Test ONNX runtime on CUDA
 #[cfg(all(feature = "cuda", not(feature = "trt")))]
-fn run_onnx_cuda(model_folder_path: &str, audio: &[i16]) {
-    println!("Running ONNX model on CUDA: {}", model_path);
+fn run_onnx_cuda<T: onnx::TensorElement + Default + onnx_impl::ToFromF32>(
+    model_folder_path: &str,
+    audio: &[i16],
+) {
+    println!("Running ONNX model on CUDA: {}", model_folder_path);
 
+    let mut moonshine = onnx_impl::Moonshine::<T>::new(model_folder_path, onnx::Executor::Cuda(0));
     // TODO: warmup request (discard result)
 
-    // TODO: perform test
-    latency = 0;
-    output = "TODO".to_string()
-
+    // perform test
+    let mut latency: Option<u64> = None;
+    let mut last_partial = String::new();
+    for chunk in audio.chunks(8000) {
+        let (partial, new_latency) = moonshine.run_chunk(chunk);
+        if latency.is_none() {
+            latency = Some(new_latency);
+        }
+        last_partial = partial;
+    }
+    let latency = latency.unwrap();
     println!("latency: {} ms", latency);
-    println!("Output: {}", output);
+    println!("Output: {}", last_partial);
 }
 
 // Test TensorRT
 #[cfg(all(not(feature = "cuda"), feature = "trt"))]
 fn run_tensorrt(engine_folder_path: &str, audio: &[i16]) {
-    println!("Running ONNX model on CUDA: {}", model_path);
+    println!("Running TensorRT engine: {}", engine_folder_path);
 
-    // TODO: warmup request (discard result)
+    let mut moonshine = tensorrt_impl::Moonshine::new(engine_folder_path);
+    moonshine.warmup(&audio[..4000]);
 
-    // TODO: perform test
-    latency = 0;
-    output = "TODO".to_string()
-
+    let mut latency: Option<u64> = None;
+    let mut last_partial = String::new();
+    for chunk in audio.chunks(8000) {
+        let (partial, new_latency) = moonshine.run_chunk(chunk);
+        if latency.is_none() {
+            latency = Some(new_latency);
+        }
+        last_partial = partial;
+    }
+    let latency = latency.unwrap();
     println!("latency: {} ms", latency);
-    println!("Output: {}", output);
+    println!("Output: {}", last_partial);
 }
 
 fn main() {
-    // TODO: load audio from file
-    let audio = vec![0i16; 16000];
+    let reader = hound::WavReader::open("test.wav").expect("failed to open test.wav");
+    let spec = reader.spec();
+    assert_eq!(spec.sample_rate, 16000, "expected 16 kHz sample rate");
+    assert_eq!(spec.channels, 1, "expected mono audio");
+    let audio: Vec<i16> = reader.into_samples::<i16>().map(|s| s.unwrap()).collect();
 
-    #[cfg(not(feature = "trt"))]
-    let model_folder_paths = [
-        "data/moonshine/onnx/f16",
-        "data/moonshine/onnx/q8f16",
-        "data/moonshine/onnx/q8i8",
-        "data/moonshine/onnx/q4f16",
-        "data/moonshine/onnx/q4i8",
-    ];
+    //run_onnx_cpu("data/parakeet/onnx/f16", &audio);
+
     #[cfg(all(not(feature = "cuda"), not(feature = "trt")))]
-    for model_folder_path in &model_folder_paths {
-        run_onnx_cpu(model_folder_path, &audio);
+    {
+        run_onnx_cpu::<u16>("data/moonshine/onnx/f16", &audio);
+        run_onnx_cpu::<f32>("data/moonshine/onnx/q8f16", &audio);
+        run_onnx_cpu::<f32>("data/moonshine/onnx/q8i8", &audio);
+        run_onnx_cpu::<f32>("data/moonshine/onnx/q4f16", &audio);
+        run_onnx_cpu::<f32>("data/moonshine/onnx/q4i8", &audio);
     }
     #[cfg(all(feature = "cuda", not(feature = "trt")))]
-    for model_folder_path in &model_folder_paths {
-        run_onnx_cuda(model_folder_path, &audio);
+    {
+        run_onnx_cuda::<u16>("data/moonshine/onnx/f16", &audio);
+        run_onnx_cuda::<f32>("data/moonshine/onnx/q8f16", &audio);
+        run_onnx_cuda::<f32>("data/moonshine/onnx/q8i8", &audio);
+        run_onnx_cuda::<f32>("data/moonshine/onnx/q4f16", &audio);
+        run_onnx_cuda::<f32>("data/moonshine/onnx/q4i8", &audio);
     }
     #[cfg(all(not(feature = "cuda"), feature = "trt"))]
     {
         #[cfg(feature = "jetson")]
-        let platform = "murdock";
+        let platform = "jetson";
         #[cfg(not(feature = "jetson"))]
-        let platform = "genmei";
+        let platform = "desktop";
 
-        let engine_variants = ["q8f16", "q8i8", "q4f16", "q4i8"];
+        let engine_variants = ["f16", "q8f16", "q8i8", "q4f16", "q4i8"];
         for engine_variant in &engine_variants {
-            run_tensorrt(&format!(
-                "data/moonshine/engine/{}/{}",
-                platform, engine_variant
-            ), &audio);
+            run_tensorrt(
+                &format!("data/moonshine/engine/{}/{}", platform, engine_variant),
+                &audio,
+            );
         }
     }
 }

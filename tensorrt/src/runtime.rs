@@ -13,6 +13,7 @@ pub enum DataType {
     Int8,
     Int32,
     Bool,
+    Int64,
 }
 
 impl DataType {
@@ -23,6 +24,7 @@ impl DataType {
             2 => DataType::Int8,
             3 => DataType::Int32,
             4 => DataType::Bool,
+            8 => DataType::Int64,
             _ => DataType::Float32, // fallback
         }
     }
@@ -33,6 +35,7 @@ impl DataType {
             DataType::Float32 | DataType::Int32 => 4,
             DataType::Float16 => 2,
             DataType::Int8 | DataType::Bool => 1,
+            DataType::Int64 => 8,
         }
     }
 }

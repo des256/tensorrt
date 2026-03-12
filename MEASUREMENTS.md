@@ -40,21 +40,47 @@ q4i8    202^  73^   4    577^   697^  30
 ## Parakeet v3
 
 ```
-       Desktop           Jetson
-       ONNX         TRT  ONNX       TRT
-       CPU    CUDA       CPU  CUDA
+       Desktop            Jetson
+       ONNX         TRT   ONNX       TRT
+       CPU    CUDA        CPU  CUDA
 
-f16    415    446
-q8f16  386    426
-q8i8   704    309
-q4f16  400*   283
-q4i8   357    282
+f16    415    446   246
+q8f16  386    426   244?
+q8i8   704*   309*  246^
+q4f16  400^   283^  247
+q4i8   357    282^  251^
 
-* = output missed parts
+* = output missed entirely
+^ = output incomplete
+? = minor error
 ```
 
 ### Findings
 
-- CUDA doesn't seem to improve much
+- CUDA doesn't seem to improve much; possibly because this is a very CPU-heavy model (copying memory back and forth)
+- could be interesting to explore rebuilding the model entirely to reduce the CPU/GPU interaction
 
 ### Future
+
+## Moonshine
+
+```
+       Desktop         Jetson
+       ONNX       TRT  ONNX       TRT
+       CPU  CUDA       CPU  CUDA
+
+f16    101  181^  70*
+q8f16  43*  83*   65*
+q8i8   91*  51*   6
+q4f16  70^  18^   65*
+q4i8   52^  17^   6
+
+* = output is garbage
+^ = output incomplete
+```
+
+### Findings
+
+- Moonshine way faster than parakeet
+- f16 has a NaN problem in this particular model
+-

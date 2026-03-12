@@ -64,16 +64,23 @@ fn run_onnx_cuda<T: onnx::TensorElement + Default + onnx_impl::ToFromF32>(
 // Test TensorRT
 #[cfg(all(not(feature = "cuda"), feature = "trt"))]
 fn run_tensorrt(engine_folder_path: &str, audio: &[i16]) {
-    println!("Running ONNX model on CUDA: {}", model_path);
+    println!("Running TensorRT engine: {}", engine_folder_path);
 
-    // TODO: warmup request (discard result)
+    let mut parakeet = tensorrt_impl::Parakeet::new(engine_folder_path);
+    parakeet.warmup(&audio[..4000]);
 
-    // TODO: perform test
-    let latency = 0;
-    let output = "TODO".to_string();
-
+    let mut latency: Option<u64> = None;
+    let mut last_partial = String::new();
+    for chunk in audio.chunks(8000) {
+        let (partial, new_latency) = parakeet.run_chunk(chunk);
+        if latency.is_none() {
+            latency = Some(new_latency);
+        }
+        last_partial = partial;
+    }
+    let latency = latency.unwrap();
     println!("latency: {} ms", latency);
-    println!("Output: {}", output);
+    println!("Output: {}", last_partial);
 }
 
 fn main() {
@@ -104,11 +111,11 @@ fn main() {
     #[cfg(all(not(feature = "cuda"), feature = "trt"))]
     {
         #[cfg(feature = "jetson")]
-        let platform = "murdock";
+        let platform = "jetson";
         #[cfg(not(feature = "jetson"))]
-        let platform = "genmei";
+        let platform = "desktop";
 
-        let engine_variants = ["q8f16", "q8i8", "q4f16", "q4i8"];
+        let engine_variants = ["f16", "q8f16", "q4f16"];
         for engine_variant in &engine_variants {
             run_tensorrt(
                 &format!("data/parakeet/engine/{}/{}", platform, engine_variant),

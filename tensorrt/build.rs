@@ -25,29 +25,32 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ffi/trt_runtime.cpp");
     println!("cargo:rerun-if-changed=src/ffi/trt_runtime.h");
 
-    let trtllm_root =
-        std::env::var("TRTLLM_ROOT").expect("TRTLLM_ROOT env var must be set when building");
+    // --- TRT-LLM executor (only when `trt` feature is active) ---
+    if std::env::var("CARGO_FEATURE_TRT").is_ok() {
+        let trtllm_root =
+            std::env::var("TRTLLM_ROOT").expect("TRTLLM_ROOT env var must be set when building with the `trt` feature");
 
-    let include_dir = format!("{trtllm_root}/cpp/include");
-    let build_lib_dir = format!("{trtllm_root}/cpp/build/tensorrt_llm");
+        let include_dir = format!("{trtllm_root}/cpp/include");
+        let build_lib_dir = format!("{trtllm_root}/cpp/build/tensorrt_llm");
 
-    cc::Build::new()
-        .cpp(true)
-        .std("c++17")
-        .file("src/ffi/trtllm_executor.cpp")
-        .include(&include_dir)
-        .include("/usr/local/cuda/include")
-        .flag("-Wno-deprecated-declarations")
-        .flag("-D_GLIBCXX_USE_CXX11_ABI=1")
-        .compile("trtllm_executor_stub");
+        cc::Build::new()
+            .cpp(true)
+            .std("c++17")
+            .file("src/ffi/trtllm_executor.cpp")
+            .include(&include_dir)
+            .include("/usr/local/cuda/include")
+            .flag("-Wno-deprecated-declarations")
+            .flag("-D_GLIBCXX_USE_CXX11_ABI=1")
+            .compile("trtllm_executor_stub");
 
-    // TRT-LLM specific libraries (nvinfer/cudart/stdc++ already linked above).
-    println!("cargo:rustc-link-search=native={build_lib_dir}");
-    println!("cargo:rustc-link-search=native={build_lib_dir}/plugins");
-    println!("cargo:rustc-link-lib=dylib=tensorrt_llm");
-    println!("cargo:rustc-link-lib=dylib=nvinfer_plugin_tensorrt_llm");
+        // TRT-LLM specific libraries (nvinfer/cudart/stdc++ already linked above).
+        println!("cargo:rustc-link-search=native={build_lib_dir}");
+        println!("cargo:rustc-link-search=native={build_lib_dir}/plugins");
+        println!("cargo:rustc-link-lib=dylib=tensorrt_llm");
+        println!("cargo:rustc-link-lib=dylib=nvinfer_plugin_tensorrt_llm");
 
-    println!("cargo:rerun-if-changed=src/ffi/trtllm_executor.cpp");
-    println!("cargo:rerun-if-changed=src/ffi/trtllm_executor.h");
+        println!("cargo:rerun-if-changed=src/ffi/trtllm_executor.cpp");
+        println!("cargo:rerun-if-changed=src/ffi/trtllm_executor.h");
+    }
     println!("cargo:rerun-if-env-changed=TRTLLM_ROOT");
 }

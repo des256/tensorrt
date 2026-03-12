@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-trt = ["tensorrt/trt"]
+trt = ["dep:tensorrt"]
 cuda = []
 jetson = []
 
@@ -13,3 +13,6 @@ tensorrt = { path = "../../tensorrt", optional = true }
 onnx = { path = "../../onnx" }
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 hound = "3"
+
+[build-dependencies]
+cc = "1"

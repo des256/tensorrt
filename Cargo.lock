@@ -315,6 +315,7 @@ dependencies = [
 name = "moonshine"
 version = "0.1.0"
 dependencies = [
+ "hound",
  "onnx",
  "tensorrt",
  "tokenizers",
@@ -366,6 +367,7 @@ version = "0.1.0"
 name = "parakeet"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "hound",
  "onnx",
  "tensorrt",
