@@ -5,8 +5,8 @@ Here are all measurements of all experiments.
 ## Llama 3.2 Instruct 3b
 
 ```
-            Desktop          Jetson
-           ONNX     TRT     ONNX      TRT
+        Desktop          Jetson
+        ONNX        TRT  ONNX         TRT
         CPU   CUDA       CPU    CUDA
 
 f16     449   29    10   1830   X     X
@@ -38,3 +38,23 @@ q4i8    202^  73^   4    577^   697^  30
 - unsure what quantization does with STT and TTS, might need q4f16 or just raw f16 for STT encoder alone (audio signal is 16-bits)
 
 ## Parakeet v3
+
+```
+       Desktop           Jetson
+       ONNX         TRT  ONNX       TRT
+       CPU    CUDA       CPU  CUDA
+
+f16    415    446
+q8f16  386    426
+q8i8   704    309
+q4f16  400*   283
+q4i8   357    282
+
+* = output missed parts
+```
+
+### Findings
+
+- CUDA doesn't seem to improve much
+
+### Future

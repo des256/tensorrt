@@ -11,10 +11,13 @@ mod tensorrt_impl;
 
 // test ONNX with CPU provider
 #[cfg(all(not(feature = "cuda"), not(feature = "trt")))]
-fn run_onnx_cpu(model_folder_path: &str, audio: &[i16]) {
+fn run_onnx_cpu<T: onnx::TensorElement + Default + onnx_impl::ToFromF32>(
+    model_folder_path: &str,
+    audio: &[i16],
+) {
     println!("Running ONNX model on CPU: {}", model_folder_path);
 
-    let mut parakeet = onnx_impl::Parakeet::new(model_folder_path, onnx::Executor::Cpu);
+    let mut parakeet = onnx_impl::Parakeet::<T>::new(model_folder_path, onnx::Executor::Cpu);
     // TODO: warmup request (discard result)
 
     // perform test
@@ -34,10 +37,13 @@ fn run_onnx_cpu(model_folder_path: &str, audio: &[i16]) {
 
 // Test ONNX runtime on CUDA
 #[cfg(all(feature = "cuda", not(feature = "trt")))]
-fn run_onnx_cuda(model_folder_path: &str, audio: &[i16]) {
-    println!("Running ONNX model on CUDA: {}", model_path);
+fn run_onnx_cuda<T: onnx::TensorElement + Default + onnx_impl::ToFromF32>(
+    model_folder_path: &str,
+    audio: &[i16],
+) {
+    println!("Running ONNX model on CUDA: {}", model_folder_path);
 
-    let mut parakeet = onnx_impl::Parakeet::new(model_folder_path, onnx::Executor::Cuda(0));
+    let mut parakeet = onnx_impl::Parakeet::<T>::new(model_folder_path, onnx::Executor::Cuda(0));
     // TODO: warmup request (discard result)
 
     // perform test
@@ -79,21 +85,21 @@ fn main() {
 
     //run_onnx_cpu("data/parakeet/onnx/f16", &audio);
 
-    #[cfg(not(feature = "trt"))]
-    let model_folder_paths = [
-        "data/parakeet/onnx/f16",
-        "data/parakeet/onnx/q8f16",
-        "data/parakeet/onnx/q8i8",
-        "data/parakeet/onnx/q4f16",
-        "data/parakeet/onnx/q4i8",
-    ];
     #[cfg(all(not(feature = "cuda"), not(feature = "trt")))]
-    for model_folder_path in &model_folder_paths {
-        run_onnx_cpu(model_folder_path, &audio);
+    {
+        run_onnx_cpu::<u16>("data/parakeet/onnx/f16", &audio);
+        run_onnx_cpu::<f32>("data/parakeet/onnx/q8f16", &audio);
+        run_onnx_cpu::<f32>("data/parakeet/onnx/q8i8", &audio);
+        run_onnx_cpu::<f32>("data/parakeet/onnx/q4f16", &audio);
+        run_onnx_cpu::<f32>("data/parakeet/onnx/q4i8", &audio);
     }
     #[cfg(all(feature = "cuda", not(feature = "trt")))]
-    for model_folder_path in &model_folder_paths {
-        run_onnx_cuda(model_folder_path, &audio);
+    {
+        run_onnx_cuda::<u16>("data/parakeet/onnx/f16", &audio);
+        run_onnx_cuda::<f32>("data/parakeet/onnx/q8f16", &audio);
+        run_onnx_cuda::<f32>("data/parakeet/onnx/q8i8", &audio);
+        run_onnx_cuda::<f32>("data/parakeet/onnx/q4f16", &audio);
+        run_onnx_cuda::<f32>("data/parakeet/onnx/q4i8", &audio);
     }
     #[cfg(all(not(feature = "cuda"), feature = "trt"))]
     {

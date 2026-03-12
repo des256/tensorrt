@@ -601,7 +601,7 @@ impl Onnx {
         let mut environment: *mut OrtEnv = null_mut();
         let status = unsafe {
             create_env(
-                OrtLoggingLevel::Verbose,
+                OrtLoggingLevel::Warning,
                 log_id.as_ptr(),
                 &mut environment as *mut _,
             )
