@@ -32,10 +32,9 @@ q4i8    202^  73^   4    577^   697^  30
 - q4i8 is the best deal with TensorRT (4ms Desktop, 30ms Jetson)
 - Desktop is only around 4x faster than Jetson
 
-### Future
+### Verdict
 
-- check memory usage during more complicated tests
-- unsure what quantization does with STT and TTS, might need q4f16 or just raw f16 for STT encoder alone (audio signal is 16-bits)
+- use TensorRT q4i8
 
 ## Parakeet v3
 
@@ -60,7 +59,9 @@ q4i8   357    282^  251^
 - CUDA doesn't seem to improve much; possibly because this is a very CPU-heavy model (copying memory back and forth)
 - could be interesting to explore rebuilding the model entirely to reduce the CPU/GPU interaction
 
-### Future
+### Verdict
+
+- actually... let's forget about Parakeet, and move to Moonshine entirely
 
 ## Moonshine
 
@@ -69,11 +70,11 @@ q4i8   357    282^  251^
        ONNX       TRT  ONNX       TRT
        CPU  CUDA       CPU  CUDA
 
-f16    101  181^  70*
-q8f16  43*  83*   65*
-q8i8   91*  51*   6
-q4f16  70^  18^   65*
-q4i8   52^  17^   6
+f16    101  181^  70*  483  484   24
+q8f16  43*  83*   65*  163  247   24?
+q8i8   91*  51*   6    X    194   12*
+q4f16  70^  18^   65*  X    94    24^
+q4i8   52^  17^   6    X    82    13*
 
 * = output is garbage
 ^ = output incomplete
@@ -81,6 +82,9 @@ q4i8   52^  17^   6
 
 ### Findings
 
-- Moonshine way faster than parakeet
-- f16 has a NaN problem in this particular model
--
+- Moonshine is way faster than Parakeet
+- the usable optimum for this kind of work for Moonshine is TensorRT f16. Quantization degrades the audio processing too much.
+
+### Verdict
+
+- Use TensorRT f16 (but fix NaN problem on Desktop)

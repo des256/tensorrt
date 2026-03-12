@@ -91,10 +91,19 @@ const NHEADS: usize = 10;
 const HEAD_DIM: usize = 64;
 const ENC_DIM: usize = 768;
 
-/// Max audio length in samples (30 s at 16 kHz) — must match --maxShapes.
+/// Max audio length in samples — must match --maxShapes in the build script.
+/// Desktop: 480000 (30 s at 16 kHz).  Jetson: 240000 (15 s).
+#[cfg(not(feature = "jetson"))]
 const MAX_AUDIO_LEN: usize = 480000;
+#[cfg(feature = "jetson")]
+const MAX_AUDIO_LEN: usize = 240000;
+
 /// Max encoder sequence length — must match --maxShapes.
+/// enc_len = ((audio_len / 80) - 1) / 4 + 1  →  desktop: 1500, jetson: 750.
+#[cfg(not(feature = "jetson"))]
 const MAX_ENC_LEN: usize = 1500;
+#[cfg(feature = "jetson")]
+const MAX_ENC_LEN: usize = 750;
 
 /// KV cache buffer size in bytes at maximum past_len.
 const KV_MAX_BYTES: usize = DEPTH * 1 * NHEADS * MAX_TOKENS * HEAD_DIM * size_of::<f32>();
