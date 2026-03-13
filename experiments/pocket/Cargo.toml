@@ -1,0 +1,15 @@
+[package]
+name = "pocket"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+trt = ["dep:tensorrt"]
+cuda = []
+jetson = []
+
+[dependencies]
+tensorrt = { path = "../../tensorrt", optional = true }
+onnx = { path = "../../onnx" }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+hound = "3"

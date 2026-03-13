@@ -1,0 +1,8 @@
+[package]
+name = "pocket-voice"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+onnx = { path = "../../onnx" }
+hound = "3"
