@@ -358,18 +358,177 @@ class FlowLMStepONNX(nn.Module):
         return mask
 
 
+# ── Split architecture: FlowLMMain (transformer only) + FlowLMFlow (ODE) ──
+
+def _transformer_layer_forward(layer, x, layer_cache, cache_len):
+    """Forward one transformer layer with explicit KV cache concat."""
+    B, T, D = x.shape
+
+    x_normed = layer.norm1(x)
+    projected = layer.self_attn.in_proj(x_normed)  # [B, T, 3*D]
+    packed = projected.view(B, T, 3, NUM_HEADS, HEAD_DIM)
+    q, k, v = torch.unbind(packed, dim=2)
+
+    q, k = apply_rope_onnx(q, k, cache_len)
+
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+
+    past_k = layer_cache[0].transpose(1, 2)
+    past_v = layer_cache[1].transpose(1, 2)
+    full_k = torch.cat([past_k, k], dim=2)
+    full_v = torch.cat([past_v, v], dim=2)
+
+    T_q = T
+    T_kv = full_k.shape[2]
+    row_idx = torch.arange(T_q, device=x.device).unsqueeze(1)
+    col_idx = torch.arange(T_kv, device=x.device).unsqueeze(0)
+    mask = col_idx <= (T_kv - T_q + row_idx)
+
+    attn_out = F.scaled_dot_product_attention(
+        q, full_k, full_v, is_causal=False, attn_mask=mask,
+    )
+
+    attn_out = attn_out.transpose(1, 2).reshape(B, T, D)
+    attn_out = layer.self_attn.out_proj(attn_out)
+    x = x + attn_out
+
+    x_normed2 = layer.norm2(x)
+    ff_out = layer.linear2(F.gelu(layer.linear1(x_normed2)))
+    x = x + ff_out
+
+    new_k = full_k.transpose(1, 2)
+    new_v = full_v.transpose(1, 2)
+    new_layer_kv = torch.stack([new_k, new_v])
+
+    return x, new_layer_kv
+
+
+class FlowLMMainONNX(nn.Module):
+    """Transformer backbone with explicit KV cache — no flow matching.
+
+    Split architecture counterpart to FlowLMStepONNX.  This outputs the raw
+    conditioning vector and EOS logit; the caller runs FlowLMFlowONNX
+    separately for the ODE flow-matching step.
+
+    This supports conditioning-only passes (empty sequence, non-empty
+    text_embeddings) which is required for voice cloning prefill.
+
+    Inputs:
+        sequence:        [B, T_seq, LDIM]  — latent input (NaN=BOS, empty for conditioning)
+        text_embeddings: [B, T_cond, D_MODEL] — conditioning (voice/text, empty during gen)
+        kv_cache:        [NUM_LAYERS, 2, B, past_len, NUM_HEADS, HEAD_DIM]
+        cache_len:       scalar int64
+
+    Outputs:
+        conditioning:    [B, D_MODEL]  — transformer output at last position
+        eos_logit:       [B, 1]        — raw EOS logit (caller thresholds at -4.0)
+        new_kv_cache:    [NUM_LAYERS, 2, B, new_len, NUM_HEADS, HEAD_DIM]
+        new_cache_len:   scalar int64
+    """
+
+    def __init__(self, flow_lm_model):
+        super().__init__()
+        self.bos_emb = flow_lm_model.bos_emb
+        self.input_linear = flow_lm_model.input_linear
+        self.out_norm = flow_lm_model.out_norm
+        self.out_eos = flow_lm_model.out_eos
+        self.layers = flow_lm_model.transformer.layers
+
+    def forward(
+        self,
+        sequence: torch.Tensor,          # [B, T_seq, LDIM]
+        text_embeddings: torch.Tensor,    # [B, T_cond, D_MODEL]
+        kv_cache: torch.Tensor,           # [NUM_LAYERS, 2, B, past_len, NUM_HEADS, HEAD_DIM]
+        cache_len: torch.Tensor,          # scalar int64
+    ):
+        # Replace NaN (BOS marker) with learned bos_emb
+        is_nan = torch.isnan(sequence)
+        sequence = torch.where(is_nan, self.bos_emb.unsqueeze(0).unsqueeze(0), sequence)
+
+        # Project latent to transformer dim
+        input_proj = self.input_linear(sequence)  # [B, T_seq, D_MODEL]
+
+        # Concatenate: text conditioning prefix + projected latent
+        x = torch.cat([text_embeddings, input_proj], dim=1)
+        T_new = x.shape[1]
+
+        # Transformer with KV cache
+        new_kv_layers = []
+        for layer_idx, layer in enumerate(self.layers):
+            layer_cache = kv_cache[layer_idx]
+            x, new_layer_kv = _transformer_layer_forward(
+                layer, x, layer_cache, cache_len
+            )
+            new_kv_layers.append(new_layer_kv)
+
+        # Output norm + last position
+        x = self.out_norm(x.to(torch.float32))
+        conditioning = x[:, -1, :]  # [B, D_MODEL]
+
+        # Raw EOS logit (not thresholded)
+        eos_logit = self.out_eos(conditioning)  # [B, 1]
+
+        new_kv_cache = torch.stack(new_kv_layers)
+        new_cache_len = cache_len + T_new
+
+        return conditioning, eos_logit, new_kv_cache, new_cache_len
+
+
+class FlowLMFlowONNX(nn.Module):
+    """Flow matching ODE step — separate from transformer backbone.
+
+    Takes the conditioning vector from FlowLMMainONNX and produces the
+    flow direction used to step from noise to the next latent.
+
+    Inputs:
+        c: [B, D_MODEL]  — conditioning vector
+        s: [B, 1]        — start time (0.0 for single step)
+        t: [B, 1]        — end time (1.0 for single step)
+        x: [B, LDIM]     — current point (noise for first step)
+
+    Outputs:
+        flow_dir: [B, LDIM]  — flow direction
+    """
+
+    def __init__(self, flow_lm_model):
+        super().__init__()
+        self.flow_net = flow_lm_model.flow_net
+
+    def forward(
+        self,
+        c: torch.Tensor,   # [B, D_MODEL]
+        s: torch.Tensor,   # [B, 1]
+        t: torch.Tensor,   # [B, 1]
+        x: torch.Tensor,   # [B, LDIM]
+    ) -> torch.Tensor:
+        return self.flow_net(c, s, t, x)  # [B, LDIM]
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Non-streaming convolution helpers (shared by mimi_decoder & voice_encoder)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 def non_streaming_conv1d(conv_module, x):
-    """Run StreamingConv1d without streaming state — just pad and convolve."""
+    """Run StreamingConv1d without streaming state — pad and convolve.
+
+    Matches the real StreamingConv1d.forward(model_state=None) behavior:
+      - pad_mode="constant" → left-pad with zeros
+      - pad_mode="replicate" → left-pad with copies of the first time-step
+    """
     kernel = conv_module._effective_kernel_size
     stride = conv_module._stride
     pad_left = kernel - stride
     if pad_left > 0:
-        x = F.pad(x, (pad_left, 0), mode="constant", value=0.0)
+        if conv_module.pad_mode == "replicate":
+            # Real model: init state["previous"] = zeros, then fills with x[..., :1]
+            # when first=True, then concatenates. Net effect = replicate first element.
+            pad = x[..., :1].expand(*x.shape[:-1], pad_left)
+            x = torch.cat([pad, x], dim=-1)
+        else:
+            x = F.pad(x, (pad_left, 0), mode="constant", value=0.0)
     return conv_module.conv(x)
 
 
@@ -392,8 +551,14 @@ def non_streaming_resblock(resblock, x):
 
 
 def mimi_transformer_layer_forward(layer, x):
-    """Mimi transformer layer without streaming state (full-sequence attention)."""
+    """Mimi transformer layer without streaming state.
+
+    Uses context-windowed causal attention matching the real model's
+    context=250 windowing — each position attends to at most the previous
+    `context` positions (not the entire sequence).
+    """
     B, T, D = x.shape
+    context = layer.self_attn.context  # typically 250
 
     x_normed = layer.norm1(x)
     projected = layer.self_attn.in_proj(x_normed)
@@ -412,7 +577,16 @@ def mimi_transformer_layer_forward(layer, x):
     k = k.transpose(1, 2)
     v = v.transpose(1, 2)
 
-    attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+    # Build context-windowed causal mask: each query position i attends to
+    # key positions max(0, i-context+1)..i only (not the full history).
+    # delta[i,j] = i - j  (how far back key j is from query i)
+    positions = torch.arange(T, device=x.device)
+    delta = positions[:, None] - positions[None, :]  # [T, T]
+    mask = (delta >= 0) & (delta < context)
+    attn_mask = torch.zeros(T, T, dtype=q.dtype, device=x.device)
+    attn_mask[~mask] = float("-inf")
+
+    attn_out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
 
     attn_out = attn_out.transpose(1, 2).reshape(B, T, D)
     attn_out = layer.self_attn.out_proj(attn_out)
@@ -693,7 +867,63 @@ torch.onnx.export(
     dynamo=False,
 )
 
+# ── 1e: Flow LM Main (transformer only, split architecture) ──────────
+print("Exporting flow_lm_main...")
+flow_main = FlowLMMainONNX(flow_lm)
+flow_main.eval()
+
+dummy_seq = torch.full((B, 1, LDIM), float("nan"))  # BOS
+dummy_text_emb_main = torch.randn(B, T_COND, D_MODEL)
+dummy_kv_main = torch.randn(NUM_LAYERS, 2, B, PAST, NUM_HEADS, HEAD_DIM)
+dummy_cache_len_main = torch.tensor(PAST, dtype=torch.long)
+
+torch.onnx.export(
+    flow_main,
+    (dummy_seq, dummy_text_emb_main, dummy_kv_main, dummy_cache_len_main),
+    str(raw_dir / "flow_lm_main.onnx"),
+    input_names=["sequence", "text_embeddings", "kv_cache", "cache_len"],
+    output_names=["conditioning", "eos_logit", "new_kv_cache", "new_cache_len"],
+    dynamic_axes={
+        "sequence":        {0: "batch", 1: "seq_len"},
+        "text_embeddings": {0: "batch", 1: "cond_len"},
+        "kv_cache":        {2: "batch", 3: "past_len"},
+        "conditioning":    {0: "batch"},
+        "eos_logit":       {0: "batch"},
+        "new_kv_cache":    {2: "batch", 3: "new_len"},
+    },
+    opset_version=18,
+    dynamo=False,
+)
+
+# ── 1f: Flow LM Flow (ODE step, split architecture) ──────────────────
+print("Exporting flow_lm_flow...")
+flow_flow = FlowLMFlowONNX(flow_lm)
+flow_flow.eval()
+
+dummy_c = torch.randn(B, D_MODEL)
+dummy_s = torch.zeros(B, 1)
+dummy_t = torch.ones(B, 1)
+dummy_x = torch.randn(B, LDIM)
+
+torch.onnx.export(
+    flow_flow,
+    (dummy_c, dummy_s, dummy_t, dummy_x),
+    str(raw_dir / "flow_lm_flow.onnx"),
+    input_names=["c", "s", "t", "x"],
+    output_names=["flow_dir"],
+    dynamic_axes={
+        "c":        {0: "batch"},
+        "s":        {0: "batch"},
+        "t":        {0: "batch"},
+        "x":        {0: "batch"},
+        "flow_dir": {0: "batch"},
+    },
+    opset_version=18,
+    dynamo=False,
+)
+
 del tts_model, flow_lm, mimi, text_enc, flow_step, mimi_dec, voice_enc
+del flow_main, flow_flow
 torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
 # Consolidate raw exports
@@ -761,6 +991,7 @@ q8i8_dir.mkdir(parents=True, exist_ok=True)
 FLOW_LM_DIM_OVERRIDES: dict[str, int] = {
     "cond_len": 10,
     "past_len": 20,
+    "seq_len": 1,  # flow_lm_main: sequence is 0 or 1 tokens
 }
 MIMI_DIM_OVERRIDES: dict[str, int] = {
     "num_frames": 10,

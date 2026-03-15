@@ -11,6 +11,8 @@ const HEAD_DIM: usize = D_MODEL / NUM_HEADS; // 64
 const LDIM: usize = 32;
 const MAX_GEN_STEPS: usize = 500;
 const TEMPERATURE: f32 = 0.7;
+const EOS_THRESHOLD: f32 = -4.0;
+const FRAMES_AFTER_EOS: usize = 3;
 
 pub trait ToFromF32 {
     fn to_f32(self) -> f32;
@@ -35,27 +37,28 @@ impl ToFromF32 for f32 {
     }
 }
 
-/// Pocket TTS inference using ONNX Runtime.
+/// Pocket TTS inference using ONNX Runtime (split architecture).
 ///
-/// Orchestrates the four ONNX components:
-///   text_encoder  — token IDs → text embeddings
-///   flow_lm       — autoregressive latent generation with KV cache
-///   mimi_decoder  — latent frames → audio waveform
-///   voice_encoder — reference audio → speaker conditioning (not used in basic TTS)
+/// Uses the split model architecture matching Actor:
+///   text_encoder    — token IDs → text embeddings
+///   flow_lm_main    — transformer backbone with KV cache
+///   flow_lm_flow    — flow matching ODE step
+///   mimi_decoder    — latent frames → audio waveform
 pub struct Pocket<T: TensorElement + Default> {
     onnx: Arc<onnx::Onnx>,
     text_encoder_session: onnx::Session,
-    flow_lm_session: onnx::Session,
+    flow_lm_main_session: onnx::Session,
+    flow_lm_flow_session: onnx::Session,
     mimi_decoder_session: onnx::Session,
     tokenizer: tokenizers::Tokenizer,
 
     // Generation state (set by start(), consumed by step())
-    text_embeddings: Option<onnx::Value>,
     kv_cache: Option<onnx::Value>,
     cache_len: i64,
     prev_latent: Option<Vec<T>>, // None = BOS (NaN), Some = previous latent
     latents: Vec<Vec<f32>>,      // accumulated latent frames as f32
     audio_output: Option<Vec<i16>>,
+    eos_step: Option<usize>,
     done: bool,
     rng: Xorshift64,
 
@@ -72,11 +75,17 @@ impl<T: TensorElement + Default + ToFromF32> Pocket<T> {
             4,
             format!("{}/text_encoder.onnx", model_folder_path),
         );
-        let flow_lm_session = onnx.create_session(
+        let flow_lm_main_session = onnx.create_session(
             executor,
             onnx::OptimizationLevel::EnableAll,
             4,
-            format!("{}/flow_lm.onnx", model_folder_path),
+            format!("{}/flow_lm_main.onnx", model_folder_path),
+        );
+        let flow_lm_flow_session = onnx.create_session(
+            executor,
+            onnx::OptimizationLevel::EnableAll,
+            4,
+            format!("{}/flow_lm_flow.onnx", model_folder_path),
         );
         let mimi_decoder_session = onnx.create_session(
             executor,
@@ -99,23 +108,59 @@ impl<T: TensorElement + Default + ToFromF32> Pocket<T> {
         Self {
             onnx,
             text_encoder_session,
-            flow_lm_session,
+            flow_lm_main_session,
+            flow_lm_flow_session,
             mimi_decoder_session,
             tokenizer,
-            text_embeddings: None,
             kv_cache: None,
             cache_len: 0,
             prev_latent: None,
             latents: Vec::new(),
             audio_output: None,
+            eos_step: None,
             done: true,
             rng: Xorshift64::new(42),
             phantom: PhantomData,
         }
     }
 
-    /// Prepare for generation: tokenize text, run text_encoder, init KV cache.
-    pub fn start(&mut self, text: &str) {
+    /// Run a conditioning pass through flow_lm_main (no latent input).
+    ///
+    /// Feeds `text_embeddings` through the transformer with an empty sequence,
+    /// updating the KV cache. Used for voice prefill and text conditioning.
+    fn conditioning_pass(&mut self, text_embeddings: &onnx::Value) {
+        let empty_seq: Vec<T> = Vec::new();
+        let empty_seq_tensor =
+            onnx::Value::from_slice(&self.onnx, &[1, 0, LDIM], &empty_seq);
+        let cache_len_tensor =
+            onnx::Value::from_slice(&self.onnx, &[1], &[self.cache_len]);
+        let kv = self.kv_cache.as_ref().unwrap();
+
+        let mut outputs = self.flow_lm_main_session.run(
+            &[
+                ("sequence", &empty_seq_tensor),
+                ("text_embeddings", text_embeddings),
+                ("kv_cache", kv),
+                ("cache_len", &cache_len_tensor),
+            ],
+            &["conditioning", "eos_logit", "new_kv_cache", "new_cache_len"],
+        );
+
+        // Only need the updated KV cache from conditioning passes
+        let _conditioning = outputs.remove(0);
+        let _eos_logit = outputs.remove(0);
+        let new_kv_cache = outputs.remove(0);
+        let new_cache_len_val = outputs.remove(0);
+
+        self.kv_cache = Some(new_kv_cache);
+        self.cache_len = new_cache_len_val.extract_tensor::<i64>()[0];
+    }
+
+    /// Prepare for generation: tokenize text, run conditioning passes, init state.
+    ///
+    /// `voice` is a flat f32 slice of shape [1, T_frames, 1024] from the voice
+    /// encoder. Pass an empty slice to generate without voice conditioning.
+    pub fn start(&mut self, voice: &[f32], text: &str) {
         let text = prepare_text(text);
         let encoding = self.tokenizer.encode(text, false).expect("tokenize failed");
         let token_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
@@ -128,7 +173,7 @@ impl<T: TensorElement + Default + ToFromF32> Pocket<T> {
             &[("token_ids", &token_tensor)],
             &["text_embeddings"],
         );
-        self.text_embeddings = Some(enc_outputs.into_iter().next().unwrap());
+        let text_embeddings_f32 = enc_outputs[0].extract_as_f32();
 
         // Init empty KV cache: [NUM_LAYERS, 2, 1, 0, NUM_HEADS, HEAD_DIM]
         self.kv_cache = Some(onnx::Value::zeros::<T>(
@@ -136,9 +181,26 @@ impl<T: TensorElement + Default + ToFromF32> Pocket<T> {
             &[NUM_LAYERS as i64, 2, 1, 0, NUM_HEADS as i64, HEAD_DIM as i64],
         ));
         self.cache_len = 0;
+
+        // Voice conditioning pass (if voice provided)
+        if !voice.is_empty() {
+            let t_frames = voice.len() / D_MODEL;
+            let voice_t: Vec<T> = voice.iter().map(|&v| T::from_f32(v)).collect();
+            let voice_tensor =
+                onnx::Value::from_slice(&self.onnx, &[1, t_frames, D_MODEL], &voice_t);
+            self.conditioning_pass(&voice_tensor);
+        }
+
+        // Text conditioning pass
+        let text_t: Vec<T> = text_embeddings_f32.iter().map(|&v| T::from_f32(v)).collect();
+        let text_tensor =
+            onnx::Value::from_slice(&self.onnx, &[1, num_tokens, D_MODEL], &text_t);
+        self.conditioning_pass(&text_tensor);
+
         self.prev_latent = None; // BOS
         self.latents = Vec::new();
         self.audio_output = None;
+        self.eos_step = None;
         self.done = false;
     }
 
@@ -157,8 +219,8 @@ impl<T: TensorElement + Default + ToFromF32> Pocket<T> {
             return Some(self.audio_output.as_ref().unwrap());
         }
 
-        // Build prev_latent tensor [1, 1, LDIM]
-        let prev_latent_tensor = match &self.prev_latent {
+        // Build sequence tensor [1, 1, LDIM]
+        let sequence_tensor = match &self.prev_latent {
             None => {
                 // BOS: fill with NaN
                 let nan_data: Vec<T> = vec![T::from_f32(f32::NAN); LDIM];
@@ -167,72 +229,87 @@ impl<T: TensorElement + Default + ToFromF32> Pocket<T> {
             Some(data) => onnx::Value::from_slice(&self.onnx, &[1, 1, LDIM], data),
         };
 
-        // Noise for flow matching: [1, LDIM] normal with std = sqrt(temperature)
-        // Python default is temp=0.7 → std ≈ 0.837; using std=1.0 produces noise.
-        let temp_scale = TEMPERATURE.sqrt();
-        let noise: Vec<T> = (0..LDIM / 2)
-            .flat_map(|_| {
-                let (n1, n2) = self.rng.normal_pair();
-                [T::from_f32(n1 * temp_scale), T::from_f32(n2 * temp_scale)]
-            })
-            .collect();
-        let noise_tensor = onnx::Value::from_slice(&self.onnx, &[1, LDIM], &noise);
+        // Empty text_embeddings for generation steps (conditioning is in KV cache)
+        let empty_text: Vec<T> = Vec::new();
+        let empty_text_tensor =
+            onnx::Value::from_slice(&self.onnx, &[1, 0, D_MODEL], &empty_text);
 
         let cache_len_tensor =
             onnx::Value::from_slice(&self.onnx, &[1], &[self.cache_len]);
-
-        let text_emb = self.text_embeddings.as_ref().unwrap();
         let kv = self.kv_cache.as_ref().unwrap();
 
-        let mut outputs = self.flow_lm_session.run(
+        // Run flow_lm_main: get conditioning vector + eos_logit + updated KV cache
+        let mut main_outputs = self.flow_lm_main_session.run(
             &[
-                ("text_embeddings", text_emb),
-                ("prev_latent", &prev_latent_tensor),
+                ("sequence", &sequence_tensor),
+                ("text_embeddings", &empty_text_tensor),
                 ("kv_cache", kv),
                 ("cache_len", &cache_len_tensor),
-                ("noise", &noise_tensor),
             ],
-            &["next_latent", "is_eos", "new_kv_cache", "new_cache_len"],
+            &["conditioning", "eos_logit", "new_kv_cache", "new_cache_len"],
         );
 
-        // Extract outputs
-        let next_latent_val = outputs.remove(0);
-        let is_eos_val = outputs.remove(0);
-        let new_kv_cache = outputs.remove(0);
-        let new_cache_len_val = outputs.remove(0);
+        let conditioning = main_outputs.remove(0);
+        let eos_logit_val = main_outputs.remove(0);
+        let new_kv_cache = main_outputs.remove(0);
+        let new_cache_len_val = main_outputs.remove(0);
 
-        // next_latent: [1, LDIM] — extract as f32 for accumulation
-        let next_latent_f32 = next_latent_val.extract_as_f32();
+        // EOS check: raw logit > -4.0
+        let eos_logit = eos_logit_val.extract_as_f32()[0];
+        let is_eos = eos_logit > EOS_THRESHOLD;
 
-        // is_eos: [1, 1] bool
-        let is_eos = is_eos_val.extract_tensor::<bool>()[0];
-
-        // Update cache_len from output scalar
-        let new_cache_len = new_cache_len_val.extract_tensor::<i64>()[0];
-
-        // After the first step, text_embeddings are already in the KV cache,
-        // so send an empty conditioning tensor for subsequent steps.
-        if self.latents.is_empty() {
-            let empty_cond: Vec<T> = vec![T::default(); 0];
-            self.text_embeddings = Some(onnx::Value::from_slice(
-                &self.onnx,
-                &[1, 0, D_MODEL],
-                &empty_cond,
-            ));
-        }
-
-        // Store latent and update state for next step
-        let latent_as_t: Vec<T> = next_latent_f32
-            .iter()
-            .map(|&v| T::from_f32(v))
-            .collect();
-        self.prev_latent = Some(latent_as_t);
-        self.latents.push(next_latent_f32);
+        // Update KV cache state
         self.kv_cache = Some(new_kv_cache);
-        self.cache_len = new_cache_len;
+        self.cache_len = new_cache_len_val.extract_tensor::<i64>()[0];
 
-        // Check termination
-        if is_eos || self.latents.len() >= MAX_GEN_STEPS {
+        // Flow matching: single LSD step (s=0, t=1)
+        let temp_scale = TEMPERATURE.sqrt();
+        let noise_f32: Vec<f32> = (0..LDIM / 2)
+            .flat_map(|_| {
+                let (n1, n2) = self.rng.normal_pair();
+                [n1 * temp_scale, n2 * temp_scale]
+            })
+            .collect();
+
+        let noise_t: Vec<T> = noise_f32.iter().map(|&v| T::from_f32(v)).collect();
+        let noise_tensor = onnx::Value::from_slice(&self.onnx, &[1, LDIM], &noise_t);
+
+        let s_tensor =
+            onnx::Value::from_slice(&self.onnx, &[1, 1], &[T::from_f32(0.0)]);
+        let t_tensor =
+            onnx::Value::from_slice(&self.onnx, &[1, 1], &[T::from_f32(1.0)]);
+
+        let flow_outputs = self.flow_lm_flow_session.run(
+            &[
+                ("c", &conditioning),
+                ("s", &s_tensor),
+                ("t", &t_tensor),
+                ("x", &noise_tensor),
+            ],
+            &["flow_dir"],
+        );
+
+        let flow_dir_f32 = flow_outputs[0].extract_as_f32();
+
+        // Compute next latent = noise + flow_dir
+        let latent_f32: Vec<f32> = noise_f32
+            .iter()
+            .zip(flow_dir_f32.iter())
+            .map(|(&n, &fd)| n + fd)
+            .collect();
+
+        // Store for next step
+        let latent_t: Vec<T> = latent_f32.iter().map(|&v| T::from_f32(v)).collect();
+        self.prev_latent = Some(latent_t);
+        self.latents.push(latent_f32);
+
+        // EOS handling: continue for FRAMES_AFTER_EOS after first EOS
+        if is_eos && self.eos_step.is_none() {
+            self.eos_step = Some(self.latents.len());
+        }
+        let should_stop = self.latents.len() >= MAX_GEN_STEPS
+            || self.eos_step.is_some_and(|es| self.latents.len() >= es + FRAMES_AFTER_EOS);
+        if should_stop {
             self.audio_output = Some(self.decode_audio());
             // Return empty slice this step; next step returns the audio
             return Some(&[]);
